@@ -9,6 +9,12 @@ const isWeekend = (date: Date, weekendDays: number[]): boolean => weekendDays.in
 const isHoliday = (date: Date, holidays: { date: Date }[]): boolean => holidays.some(h => dateKey(h.date) === dateKey(date));
 const daysBetween = (start: Date, end: Date): number => Math.round((end.getTime() - start.getTime()) / MS_IN_A_DAY);
 
+const addDays = (date: Date, days: number): Date => {
+    const result = new Date(date);
+    result.setDate(result.getDate() + days);
+    return result;
+};
+
 // Get holidays for a year, handling multi-day holidays and timezone differences
 export function getHolidaysForYear(countryCode: string, year: number, stateCode?: string): { date: Date; name: string }[] {
     // Use browser's languages and timezone to get localized holiday names
@@ -105,7 +111,7 @@ function findGaps(allDaysOff: Set<string>, year: number, weekendDays: number[], 
         } else if (gapStart) {
             const gapLength = daysBetween(gapStart, d);
             if (gapLength > 0 && gapLength <= MAX_GAP_LENGTH) {
-                gaps.push({ start: gapStart, end: new Date(d.getTime() - MS_IN_A_DAY), gapLength });
+                gaps.push({ start: gapStart, end: addDays(d, -1), gapLength });
             }
             gapStart = null;
         }
@@ -113,7 +119,7 @@ function findGaps(allDaysOff: Set<string>, year: number, weekendDays: number[], 
     
     // Handle gap that extends to the end of the year
     if (gapStart) {
-        const gapLength = daysBetween(gapStart, new Date(endDate.getTime() + MS_IN_A_DAY));
+        const gapLength = daysBetween(gapStart, addDays(endDate, 1));
         if (gapLength > 0 && gapLength <= MAX_GAP_LENGTH) {
             gaps.push({ start: gapStart, end: endDate, gapLength });
         }
@@ -143,10 +149,11 @@ function calculateChain(date: Date, gapLength: number, allDaysOff: Set<string>, 
     let chainLength = gapLength;
     let currentDate = new Date(date);
     
-    while (allDaysOff.has(dateKey(new Date(currentDate.getTime() + MS_IN_A_DAY * increment))) || 
-           isWeekend(new Date(currentDate.getTime() + MS_IN_A_DAY * increment), weekendDays)) {
+    let neighbor = addDays(currentDate, increment);
+    while (allDaysOff.has(dateKey(neighbor)) || isWeekend(neighbor, weekendDays)) {
         chainLength++;
-        currentDate.setDate(currentDate.getDate() + increment);
+        currentDate = neighbor;
+        neighbor = addDays(currentDate, increment);
     }
 
     return { 

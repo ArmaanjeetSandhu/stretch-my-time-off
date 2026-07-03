@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { getHolidaysForYear, optimizeDaysOff, calculateConsecutiveDaysOff } from './holidayUtils';
 
 // Test constants
@@ -1241,6 +1241,90 @@ describe('holidayUtils', () => {
             });
 
             expect(Array.isArray(periods)).toBe(true);
+        });
+    });
+});
+
+describe('timezone independence', () => {
+    const originalTZ = process.env.TZ;
+
+    const restoreTZ = () => {
+        if (originalTZ === undefined) delete process.env.TZ;
+        else process.env.TZ = originalTZ;
+    };
+
+    afterEach(restoreTZ);
+
+    const ZONES = [
+        'UTC',
+        'America/New_York',
+        'Europe/London',
+        'Australia/Sydney',
+        'Australia/Lord_Howe',
+        'Pacific/Chatham',
+    ];
+
+    type Scenario = {
+        holidays: { date: Date; name: string }[];
+        year: number;
+        daysOff: number;
+        weekendDays?: number[];
+        fixedDaysOff?: Date[];
+    };
+
+    const key = (d: Date): string =>
+        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+    function signatureUnderTz(tz: string, build: () => Scenario): string {
+        process.env.TZ = tz;
+        try {
+            const { holidays, year, daysOff, weekendDays = [0, 6], fixedDaysOff = [] } = build();
+            const optimized = optimizeDaysOff(holidays, year, daysOff, weekendDays, undefined, fixedDaysOff);
+            const periods = calculateConsecutiveDaysOff(holidays, optimized, year, weekendDays, undefined, fixedDaysOff);
+            const opt = optimized.map(key).sort().join(',');
+            const per = periods
+                .map(p => `${key(p.startDate)}..${key(p.endDate)}:${p.totalDays}/${p.usedDaysOff}`)
+                .join('|');
+            return `optimized=[${opt}] periods=[${per}]`;
+        } finally {
+            restoreTZ();
+        }
+    }
+
+    const scenarios: { name: string; build: () => Scenario }[] = [
+        {
+            name: 'lone holiday near the northern fall-back window (Oct 28, 2025), budget 2',
+            build: () => ({ holidays: [{ date: new Date(2025, 9, 28), name: 'H' }], year: 2025, daysOff: 2 }),
+        },
+        {
+            name: 'holiday adjacent to the fall-back Sunday (Mon Nov 3, 2025), budget 3',
+            build: () => ({ holidays: [{ date: new Date(2025, 10, 3), name: 'H' }], year: 2025, daysOff: 3 }),
+        },
+        {
+            name: 'holiday near the spring-forward boundary (Mar 10, 2025), budget 3',
+            build: () => ({ holidays: [{ date: new Date(2025, 2, 10), name: 'H' }], year: 2025, daysOff: 3 }),
+        },
+        {
+            name: 'multiple holidays plus a fixed day off across the year, budget 5',
+            build: () => ({
+                holidays: [
+                    { date: new Date(2025, 0, 1), name: 'New Year' },
+                    { date: new Date(2025, 10, 27), name: 'Thanksgiving' },
+                    { date: new Date(2025, 11, 25), name: 'Christmas' },
+                ],
+                year: 2025,
+                daysOff: 5,
+                fixedDaysOff: [new Date(2025, 10, 28)],
+            }),
+        },
+    ];
+
+    scenarios.forEach(({ name, build }) => {
+        it(`produces identical results across timezones: ${name}`, () => {
+            const baseline = signatureUnderTz(ZONES[0], build);
+            for (const tz of ZONES.slice(1)) {
+                expect(signatureUnderTz(tz, build), `output under TZ=${tz} differs from ${ZONES[0]}`).toBe(baseline);
+            }
         });
     });
 });
